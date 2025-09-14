@@ -9,6 +9,8 @@ import com.MoneyWallet.KYC_Service.enums.KycStatus;
 import com.MoneyWallet.KYC_Service.enums.KycStep;
 import com.MoneyWallet.KYC_Service.events.KycEvent;
 import com.MoneyWallet.KYC_Service.events.producer.KycEventProducer;
+import com.MoneyWallet.KYC_Service.exception.BusinessRuleViolationException;
+import com.MoneyWallet.KYC_Service.exception.ResourceNotFoundException;
 import com.MoneyWallet.KYC_Service.repository.KycVerificationRepository;
 import com.MoneyWallet.KYC_Service.service.FileStorageService;
 import com.MoneyWallet.KYC_Service.service.KycVerificationService;
@@ -34,22 +36,52 @@ public class KycVerificationServiceImpl implements KycVerificationService {
                         .currentStep(KycStep.BASIC_DETAILS)
                         .build());
 
-
         kyc.setStatus(KycStatus.IN_PROGRESS);
         kyc.setCurrentStep(KycStep.BASIC_DETAILS);
 
-        kyc.setFullName(dto.getFullName());
-        kyc.setDateOfBirth(dto.getDateOfBirth());
-        kyc.setGender(dto.getGender());
-        kyc.setNationality(dto.getNationality());
-        kyc.setIdType(dto.getIdType());
-        kyc.setIdNumber(dto.getIdNumber());
-        kyc.setCurrentStep(KycStep.BASIC_DETAILS);
+        // ONLY update the field if it is provided (not null) in the request
+        if (dto.getFullName() != null) {
+            kyc.setFullName(dto.getFullName());
+        }
+        if (dto.getEmail() != null) {
+            kyc.setEmail(dto.getEmail());
+        }
+        if (dto.getPhone() != null) {
+            kyc.setPhone(dto.getPhone());
+        }
+        if (dto.getDateOfBirth() != null) {
+            kyc.setDateOfBirth(dto.getDateOfBirth());
+        }
+        if (dto.getGender() != null) {
+            kyc.setGender(dto.getGender());
+        }
+        if (dto.getNationality() != null) {
+            kyc.setNationality(dto.getNationality());
+        }
+        if (dto.getIdType() != null) {
+            kyc.setIdType(dto.getIdType());
+        }
+        if (dto.getIdNumber() != null) {
+            kyc.setIdNumber(dto.getIdNumber());
+        }
 
         repository.save(kyc);
 
-        // --- Publish event ---
-        KycEvent event = new KycEvent(kyc.getUserId(), kyc.getStatus().name(), kyc.getCurrentStep().name());
+        // --- Publish event with ALL necessary data ---
+        KycEvent event = KycEvent.builder()
+                .userId(kyc.getUserId())
+                .status(kyc.getStatus().name())
+                .currentStep(kyc.getCurrentStep().name())
+//                .fullName(kyc.getFullName())
+//                .email(kyc.getEmail())
+//                .phone(kyc.getPhone())
+                .dateOfBirth(kyc.getDateOfBirth())
+                .gender(kyc.getGender())
+                .nationality(kyc.getNationality())
+                .idType(kyc.getIdType())
+                .idNumber(kyc.getIdNumber())
+                .build();
+
         kycEventProducer.publishKycEvent(event);
 
         return toResponse(kyc);
@@ -59,7 +91,11 @@ public class KycVerificationServiceImpl implements KycVerificationService {
     @Override
     public KycVerificationResponse saveIdDocs(IdDocsRequest dto) {
         KycVerification kyc = repository.findByUserId(dto.getUserId())
-                .orElseThrow(() -> new IllegalArgumentException("KYC record not found for user " + dto.getUserId()));
+                .orElseThrow(() -> new ResourceNotFoundException("KYC verification record not found for user ID: " + dto.getUserId()));
+
+        if (kyc.getStatus() == KycStatus.SUBMITTED || kyc.getStatus() == KycStatus.VERIFIED) {
+            throw new BusinessRuleViolationException("KYC record for user ID '" + dto.getUserId() + "' is already finalized and cannot be modified.");
+        }
 
         // store images and get URLs
         String frontUrl = fileStorageService.storeFile(dto.getIdFrontImage(), "id-front");
@@ -71,8 +107,16 @@ public class KycVerificationServiceImpl implements KycVerificationService {
 
         repository.save(kyc);
 
-        // --- Publish event ---
-        KycEvent event = new KycEvent(kyc.getUserId(), kyc.getStatus().name(), kyc.getCurrentStep().name());
+        // --- Publish event with updated data ---
+        KycEvent event = KycEvent.builder()
+                .userId(kyc.getUserId())
+                .status(kyc.getStatus().name())
+                .currentStep(kyc.getCurrentStep().name())
+//                .fullName(kyc.getFullName())
+                .idFrontImageUrl(frontUrl)
+                .idBackImageUrl(backUrl)
+                .build();
+
         kycEventProducer.publishKycEvent(event);
         return toResponse(kyc);
     }
@@ -80,26 +124,34 @@ public class KycVerificationServiceImpl implements KycVerificationService {
     @Override
     public KycVerificationResponse saveSelfie(SelfieRequest dto) {
         KycVerification kyc = repository.findByUserId(dto.getUserId())
-                .orElseThrow(() -> new IllegalArgumentException("KYC record not found for user " + dto.getUserId()));
+                .orElseThrow(() -> new ResourceNotFoundException("KYC verification record not found for user ID: " + dto.getUserId()));
 
         String selfieUrl = fileStorageService.storeFile(dto.getSelfieImage(), "selfies");
 
         kyc.setSelfieImageUrl(selfieUrl);
         kyc.setCurrentStep(KycStep.SELFIE);
 
-        // If all pieces present, trigger Smile ID
-
         if (isAllDataPresent(kyc)) {
             kyc.setStatus(KycStatus.SUBMITTED);
             kyc.setCurrentStep(KycStep.COMPLETED);
+            // TODO:Trigger SmileId for verification
         } else {
             kyc.setStatus(KycStatus.IN_PROGRESS);
         }
 
         repository.save(kyc);
 
-        // --- Publish event ---
-        KycEvent event = new KycEvent(kyc.getUserId(), kyc.getStatus().name(), kyc.getCurrentStep().name());
+        // --- Publish event with updated data ---
+        KycEvent event = KycEvent.builder()
+                .userId(kyc.getUserId())
+                .status(kyc.getStatus().name())
+                .currentStep(kyc.getCurrentStep().name())
+                .fullName(kyc.getFullName())
+                .email(kyc.getEmail())
+                .phone(kyc.getPhone())
+                .selfieImageUrl(selfieUrl)
+                .build();
+
         kycEventProducer.publishKycEvent(event);
 
         return toResponse(kyc);
@@ -107,6 +159,8 @@ public class KycVerificationServiceImpl implements KycVerificationService {
 
     private boolean isAllDataPresent(KycVerification kyc) {
         return kyc.getFullName() != null &&
+                kyc.getEmail() != null &&
+                kyc.getPhone() != null &&
                 kyc.getDateOfBirth() != null &&
                 kyc.getGender() != null &&
                 kyc.getNationality() != null &&

@@ -24,6 +24,8 @@ public class UserRegisteredConsumer {
                     .fullName(event.getFirstName() + " " +
                             (event.getMiddleName() != null ? event.getMiddleName() + " " : "") +
                             event.getLastName())
+                    .email(event.getEmail())
+                    .phone(event.getPhone())
                     .status(KycStatus.NOT_STARTED)
                     .currentStep(KycStep.BASIC_DETAILS)
                     .build();

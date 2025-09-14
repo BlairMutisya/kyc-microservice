@@ -24,6 +24,8 @@ public class KycVerification {
 
     // Step 1 fields
     private String fullName;
+    private String email;
+    private String phone;
     private LocalDate dateOfBirth;
     private String gender;
     private String nationality;
